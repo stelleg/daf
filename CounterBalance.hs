@@ -14,14 +14,23 @@ import Data.Function
 import Data.List
 import System.Random.Shuffle
 import Control.Monad.Random hiding (split)
+import Text.Printf
 
-data VisualCondition = Video | NoVideo deriving (Enum, Bounded, Show, Ord, Eq)
-data AudioCondition = Delay | NoDelay deriving (Enum, Bounded, Show, Ord, Eq)
+data VisualCondition = Video | NoVideo deriving (Enum, Bounded,  Ord, Eq)
+data AudioCondition = Delay | NoDelay deriving (Enum, Bounded,  Ord, Eq)
+
+instance Show VisualCondition where
+  show Video = "vf"
+  show NoVideo = ""
+
+instance Show AudioCondition where
+  show Delay = "daf"
+  show NoDelay = "naf"
 
 type Block = [(Stimulus,Condition)]
 type Run = [Block]
 type Condition = (VisualCondition, AudioCondition) 
-type Stimulus = Int
+type Stimulus = String
 type Experiment = [Run]
 
 conditions :: [Condition]
@@ -29,8 +38,13 @@ conditions = cycle [(v,a) |
   v <- [Video, NoVideo], 
   a <- [Delay, NoDelay]] 
 
+pp :: Experiment -> String
+pp es = concatMap ppsubject $ zip [0..] es
+  where ppsubject (i, es) = concatMap (ppstim i) $ concat es
+        ppstim i (stim, (v,a)) = printf "%d, %d, %s\n" (i::Int) stim (show a ++ show v)
+
 stimuli :: [Stimulus]
-stimuli = [1..nStim]
+stimuli = [printf "f%02d" i | i <- [1..nStim]]
 
 nStim = 64 :: Int
 blocksize = 64 `div` 8
@@ -38,12 +52,15 @@ blocksize = 64 `div` 8
 seed = 394 -- Keep this constant accross subjects!
 
 experiment :: IO Experiment
-experiment = setStdGen (mkStdGen seed) >> runs
+experiment = do
+  runs <- setStdGen (mkStdGen seed) >> runs
+  return $ map ([("practice" ++ show i ++ ".wav", (NoVideo, NoDelay)) | i <- [1..6]] :) runs
 
 runs :: MonadRandom m => m [Run]
 runs  = return
       -- A hack to ensure we get [[Delay, Nodelay, ..], [Nodelay, Delay]]
       . zipWith (\r->if r`mod`2==0 then reverse else id) [0..] 
+      =<< (mapM $ mapM shuffleM)
       . map block 
       =<< (mapM shuffleM
       . take 64
@@ -52,4 +69,10 @@ runs  = return
 block :: Block -> Run
 block = concat . transpose . map split . groupBy (on (==) (snd.snd)) . sortBy (on compare (snd.snd))
 
-split = \case [] -> []; xs -> uncurry (:) . fmap split . splitAt blocksize $ xs
+normalizeVideo xs = (tvids ++ tnovids, nvids ++ nnovids) 
+  where videos = [k | k@(s,(Video,ac)) <- xs]
+        novideos = [k | k@(s,(NoVideo, ac)) <- xs]
+        (tvids, nvids)= splitAt 4 videos
+        (tnovids, nnovids) = splitAt 4 novideos
+
+split = \case [] -> []; xs -> uncurry (:) . fmap split . normalizeVideo $ xs
