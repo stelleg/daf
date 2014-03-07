@@ -34,6 +34,7 @@ import CounterBalance
 --import Data.WAVE
 import System.Process (system)
 import System.Posix
+import System.FilePath.Posix
 import System.Directory
 
 foreign import ccall "setup" jackSetup :: CInt -> IO ()
@@ -48,7 +49,8 @@ main = do
     [] -> do
       cursubs <- getDirectoryContents "data" 
       print cursubs
-      return $ 1 + maximum [read $ takeWhile (/= '.') f|f <- cursubs, length f > 3]
+      return $ 1 + maximum [read $ dropExtension f|f <- cursubs ++ ["-1.wav"], 
+                                                   takeExtension f == ".wav"]
     subjectID:args -> return $ read subjectID
   let video = parseArgs args 
   exists <- doesFileExist $ "data/" ++ show subjectID ++ ".wav"

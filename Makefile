@@ -7,4 +7,4 @@ jack.o: jack.c
 	gcc -c jack.c -ljack
 
 clean: 
-	rm *.o *.hi Main
+	rm *.o *.hi Main *.log
