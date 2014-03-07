@@ -43,17 +43,23 @@ foreign import ccall "jackClose" jackClose :: IO ()
 delayDur = 0.2
 
 main = do
-  (progname, subjectID:args) <- getArgsAndInitialize
+  (progname, args) <- getArgsAndInitialize
+  subjectID <- case args of
+    [] -> do
+      cursubs <- getDirectoryContents "data" 
+      print cursubs
+      return $ 1 + maximum [read $ takeWhile (/= '.') f|f <- cursubs, length f > 3]
+    subjectID:args -> return $ read subjectID
   let video = parseArgs args 
-  exists <- doesFileExist $ "data/" ++ subjectID ++ ".wav"
+  exists <- doesFileExist $ "data/" ++ show subjectID ++ ".wav"
   if exists then error "Subject exists, will not overwrite" else return ()
   es <- experiment
-  let run = es !! (read subjectID :: Int)
+  let run = es !! subjectID
   (vin, vout) <- createPipe
   vhand <- fdToHandle vout
-  saveVideo vin vout ("./data/" ++ subjectID ++ ".mp4")
+  saveVideo vin vout ("./data/" ++ show subjectID ++ ".mp4")
   closeFd vin
-  jackSetup (read subjectID :: CInt)
+  jackSetup (toEnum subjectID)
   jackSetDelay 0.0
   glut run vhand video
 
@@ -85,7 +91,7 @@ glut run vhand video = do
   frame <- atomically $ newTVar (nullPtr)
   video <- atomically $ newTVar (Just Video)
   picture <- mallocBytes $ imageWidth f * imageHeight f * 3
-  ind <- atomically $ newTVar (0,0)
+  ind <- atomically $ newTVar run
   idleCallback $= Just (idle d f vhand frame)
   displayCallback $= display f ti video frame picture
   reshapeCallback $= Just (resize f)
@@ -100,22 +106,22 @@ glut run vhand video = do
       jackClose
       exitSuccess
     (Char ' ', Down) -> do
-      forkIO (threadDelay 1000000 >> nextStim ind run video)
+      forkIO (threadDelay 1000000 >> nextStim ind video)
       return ()
     _ -> return ())
   mainLoop
 
-nextStim ind run video = atomically (readTVar ind) >>= \case
-  (b,i) | b >= 8 -> jackClose >> exitSuccess
-  (b,i) | i >= 8 -> do atomically $ writeTVar ind (b+1,0)
-                       atomically $ writeTVar video Nothing
-  (b,i) -> let (s,(v,a)) = (run !! b) !! i in do
-    putStrLn $ "Running stimulus: " ++ show s ++ ": " ++ show (v, a)
-    let filename = printf "stimuli/.wav" s
+nextStim ind video = atomically (readTVar ind) >>= \case
+  [] -> jackClose >> exitSuccess
+  []:bs -> do atomically $ writeTVar ind bs 
+              atomically $ writeTVar video Nothing
+  ((s,(v,a)):stims):bs -> do
+    putStrLn $ "Running stimulus: " ++ s ++ ": " ++ show (v, a)
+    let filename = printf "stimuli/%s.wav" s
     putStrLn $ "playing " ++ filename
     forkOS $ do x <- system $ "mplayer -af extrastereo=0 -ao jack " ++ filename ++ " 2>> mplayer.log"; return () 
     atomically $ writeTVar video (Just v)
-    atomically $ writeTVar ind (b,i+1)
+    atomically $ writeTVar ind $ stims:bs
     case a of
       Delay -> jackSetDelay delayDur
       NoDelay -> jackSetDelay 0.0

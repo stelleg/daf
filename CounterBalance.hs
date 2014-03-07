@@ -41,7 +41,7 @@ conditions = cycle [(v,a) |
 pp :: Experiment -> String
 pp es = concatMap ppsubject $ zip [0..] es
   where ppsubject (i, es) = concatMap (ppstim i) $ concat es
-        ppstim i (stim, (v,a)) = printf "%d, %d, %s\n" (i::Int) stim (show a ++ show v)
+        ppstim i (stim, (v,a)) = printf "%d, %s, %s\n" (i::Int) stim (show a ++ show v)
 
 stimuli :: [Stimulus]
 stimuli = [printf "f%02d" i | i <- [1..nStim]]
@@ -49,12 +49,12 @@ stimuli = [printf "f%02d" i | i <- [1..nStim]]
 nStim = 64 :: Int
 blocksize = 64 `div` 8
 
-seed = 394 -- Keep this constant accross subjects!
+seed = 394 -- IMPORTANT!!! Keep this constant accross subjects!!!
 
 experiment :: IO Experiment
 experiment = do
   runs <- setStdGen (mkStdGen seed) >> runs
-  return $ map ([("practice" ++ show i ++ ".wav", (NoVideo, NoDelay)) | i <- [1..6]] :) runs
+  return $ map ([("practice" ++ show i, (NoVideo, NoDelay)) | i <- [1..6]] :) runs
 
 runs :: MonadRandom m => m [Run]
 runs  = return
