@@ -52,11 +52,11 @@ main = do
       return $ 1 + maximum [read $ dropExtension f|f <- cursubs ++ ["-1.wav"], 
                                                    takeExtension f == ".wav"]
     subjectID:args -> return $ read subjectID
-  let video = parseArgs args 
   exists <- doesFileExist $ "data/" ++ show subjectID ++ ".wav"
   if exists then error "Subject exists, will not overwrite" else return ()
   es <- experiment
-  let run = es !! subjectID
+  let video = parseArgs args
+  let run = drop 1 $ es !! subjectID
   (vin, vout) <- createPipe
   vhand <- fdToHandle vout
   saveVideo vin vout ("./data/" ++ show subjectID ++ ".mp4")
@@ -75,8 +75,8 @@ glut run vhand video = do
   f <- setFormat d Capture . 
     (\f->f{ imagePixelFormat = PixelRGB24 }) =<< getFormat d Capture
   initialDisplayMode $= [ RGBMode, DoubleBuffered, WithDepthBuffer ]
-  --windowHint WindowHint'DepthBits 16
   createWindow "Delayed Audio Feedback"
+  let (w,h) = (imageWidth f, imageHeight f)
   texture Texture2D $= Enabled
   [ti] <- genObjectNames 1
   textureBinding Texture2D $= Just ti
@@ -85,17 +85,18 @@ glut run vhand video = do
     NoProxy 
     0 
     RGBA' 
-    (TextureSize2D (fromIntegral (imageWidth f)) (fromIntegral (imageHeight f))) 
+    (TextureSize2D (fromIntegral w) (fromIntegral h)) 
     0 
     (PixelData RGBA UnsignedByte nullPtr)
   textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
   textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
   frame <- atomically $ newTVar (nullPtr)
   video <- atomically $ newTVar (Just Video)
-  picture <- mallocBytes $ imageWidth f * imageHeight f * 3
+  picture <- mallocBytes $ w * h * 3
+  blank <- mallocBytes $ w * h * 3
   ind <- atomically $ newTVar run
   idleCallback $= Just (idle d f vhand frame)
-  displayCallback $= display f ti video frame picture
+  displayCallback $= display f ti video frame picture blank
   reshapeCallback $= Just (resize f)
   depthFunc $= Just Less
   keyboardMouseCallback $= Just (\k s _ _ -> case (k,s) of
@@ -146,7 +147,7 @@ idle d f phand frame = withFrame d f $ \p n -> do
   hPutStr phand $ "P6\n" ++ show w ++ " " ++ show h ++ " 255\n"
   hPutBuf phand p (w * h * 3)
 
-display f ti vid frame pic = do
+display f ti vid frame pic blank = do
   clear [ColorBuffer, DepthBuffer]
   
   -- Display image (Video, Picture, or Blank)
@@ -154,30 +155,30 @@ display f ti vid frame pic = do
   let (w,h) = (imageWidth f, imageHeight f)
   p <- atomically $ readTVar frame
   case b of 
-    Nothing -> do
-      blank <- mallocBytes (w * h * 3)
-      setTexture blank w h
+    Nothing -> setTexture blank w h
     Just Video -> setTexture p w h
     Just NoVideo -> setTexture pic w h
-  renderPrimitive Quads $ do
-    corner 0 0
-    corner 0 1
-    corner 1 1
-    corner 1 0
-  
+  case b of
+    Nothing -> return ()
+    otherwise -> renderPrimitive Quads $ do
+      corner 0 0
+      corner 0 1
+      corner 1 1
+      corner 1 0
+
   --Display text
   case b of
     Nothing -> do
       color (Color3 1.0 1.0 1.0 :: Color3 GLfloat)
-      rasterPos (Vertex2 (0.0) (0.0) :: Vertex2 GLfloat) 
-      --renderString Helvetica18 "Testing ..."
+      rasterPos (Vertex2 0 0 :: Vertex2 GLfloat) 
+      renderString Helvetica18 "Testing ..."
     _ -> return ()
 
   swapBuffers
   postRedisplay Nothing
 
 corner :: GLfloat -> GLfloat -> IO ()
-corner x y = texCoord (TexCoord2 x y) >> vertex (Vertex2 (1 - (2*x)) (1 - (2*y)))
+corner x y = texCoord (TexCoord2 x y) >> vertex (Vertex2 (1-2*x) (1-2*y))
 
 setTexture buf w h = texSubImage2D
   Texture2D
