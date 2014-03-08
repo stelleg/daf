@@ -56,7 +56,7 @@ main = do
   if exists then error "Subject exists, will not overwrite" else return ()
   es <- experiment
   let video = parseArgs args
-  let run = drop 1 $ es !! subjectID
+  let run = es !! subjectID
   (vin, vout) <- createPipe
   vhand <- fdToHandle vout
   saveVideo vin vout ("./data/" ++ show subjectID ++ ".mp4")
@@ -150,6 +150,13 @@ idle d f phand frame = withFrame d f $ \p n -> do
 display f ti vid frame pic blank = do
   clear [ColorBuffer, DepthBuffer]
   
+  matrixMode $= Projection
+  loadIdentity
+  ortho (-1) 1 (-1) 1 (-1) 1 
+  matrixMode $= Modelview 0
+  loadIdentity
+
+
   -- Display image (Video, Picture, or Blank)
   b <- atomically $ readTVar vid 
   let (w,h) = (imageWidth f, imageHeight f)
