@@ -45,13 +45,11 @@ delayDur = 0.2
 
 main = do
   (progname, args) <- getArgsAndInitialize
-  subjectID <- case args of
-    [] -> do
-      cursubs <- getDirectoryContents "data" 
-      print cursubs
-      return $ 1 + maximum [read $ dropExtension f|f <- cursubs ++ ["-1.wav"], 
-                                                   takeExtension f == ".wav"]
-    subjectID:args -> return $ read subjectID
+  subjectID <- do 
+    cursubs <- getDirectoryContents "data" 
+    print cursubs
+    return $ 1 + maximum [read $ dropExtension f|f <- cursubs ++ ["-1.wav"], 
+                                                 takeExtension f == ".wav"]
   exists <- doesFileExist $ "data/" ++ show subjectID ++ ".wav"
   if exists then error "Subject exists, will not overwrite" else return ()
   es <- experiment
@@ -91,19 +89,18 @@ glut run vhand video = do
   textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
   textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
   frame <- atomically $ newTVar (nullPtr)
-  video <- atomically $ newTVar (Just Video)
+  video <- atomically $ newTVar (Instruction "Press space to begin practice")
   picture <- mallocBytes $ w * h * 3
-  blank <- mallocBytes $ w * h * 3
   ind <- atomically $ newTVar run
   idleCallback $= Just (idle d f vhand frame)
-  displayCallback $= display f ti video frame picture blank
+  displayCallback $= display f ti video frame picture 
   reshapeCallback $= Just (resize f)
   depthFunc $= Just Less
   keyboardMouseCallback $= Just (\k s _ _ -> case (k,s) of
     (Char 'p', Down) -> withFrame d f $ \p n -> do
       copyBytes picture p (imageWidth f * imageHeight f * 3) 
-      atomically $ writeTVar video (Just NoVideo)
-      forkIO $ threadDelay 3000000 >> atomically (writeTVar video (Just Video))
+      atomically $ writeTVar video NoVideo
+      forkIO $ threadDelay 3000000 >> atomically (writeTVar video Video)
       return ()
     (Char 'q', Down) -> do
       jackClose
@@ -115,20 +112,26 @@ glut run vhand video = do
   mainLoop
 
 nextStim ind video = atomically (readTVar ind) >>= \case
-  [] -> jackClose >> exitSuccess
-  []:bs -> do atomically $ writeTVar ind bs 
-              atomically $ writeTVar video Nothing
+  [] -> do
+    atomically $ writeTVar video (Instruction "Done, thank you")
+    jackClose
+    threadDelay 3000000
+    exitSuccess
+  []:bs -> do 
+    atomically $ writeTVar ind bs 
+    atomically $ writeTVar video (Instruction "Block done, press space to continue")
   ((s,(v,a)):stims):bs -> do
     putStrLn $ "Running stimulus: " ++ s ++ ": " ++ show (v, a)
     let filename = printf "stimuli/%s.wav" s
     putStrLn $ "playing " ++ filename
     forkOS $ do x <- system $ "mplayer -af extrastereo=0 -ao jack " ++ filename ++ " 2>> mplayer.log"; return () 
-    atomically $ writeTVar video (Just v)
+    atomically $ writeTVar video v
     atomically $ writeTVar ind $ stims:bs
     case a of
       Delay -> jackSetDelay delayDur
       NoDelay -> jackSetDelay 0.0
 
+{-
 resize f (Size w h) = do
   viewport $= (Position 0 0, Size w h)
   matrixMode $= Projection
@@ -140,49 +143,46 @@ resize f (Size w h) = do
   let aspect = (hi * ws) / (wi * hs)
   ortho (-aspect) aspect (-1) 1 (-1) 1 
   return ()
+-}
+resize f (Size w h) = do
+  viewport $= (Position 0 0, Size w h)
+  matrixMode $= Projection
+  loadIdentity
+  ortho (-1) 1 (-1) 1 (-1) 1
+  postRedisplay Nothing
 
 idle d f phand frame = withFrame d f $ \p n -> do
   atomically $ writeTVar frame p
   let (w,h) = (imageWidth f, imageHeight f)
   hPutStr phand $ "P6\n" ++ show w ++ " " ++ show h ++ " 255\n"
   hPutBuf phand p (w * h * 3)
+  postRedisplay Nothing
 
-display f ti vid frame pic blank = do
+drawQuads :: [(GLfloat, GLfloat)] -> IO ()
+drawQuads = renderPrimitive Quads . mapM_ (vertex . uncurry Vertex2)
+
+display f ti vid frame pic = do
   clear [ColorBuffer, DepthBuffer]
-  
-  matrixMode $= Projection
-  loadIdentity
-  ortho (-1) 1 (-1) 1 (-1) 1 
-  matrixMode $= Modelview 0
-  loadIdentity
-
-
-  -- Display image (Video, Picture, or Blank)
   b <- atomically $ readTVar vid 
   let (w,h) = (imageWidth f, imageHeight f)
   p <- atomically $ readTVar frame
   case b of 
-    Nothing -> setTexture blank w h
-    Just Video -> setTexture p w h
-    Just NoVideo -> setTexture pic w h
-  case b of
-    Nothing -> return ()
-    otherwise -> renderPrimitive Quads $ do
-      corner 0 0
-      corner 0 1
-      corner 1 1
-      corner 1 0
-
-  --Display text
-  case b of
-    Nothing -> do
+    Instruction s -> do
+      color (Color3 0 0 0 :: Color3 GLfloat)
+      drawQuads [(-1,-1), (1,-1), (1, 1), (-1,1)]
       color (Color3 1.0 1.0 1.0 :: Color3 GLfloat)
       rasterPos (Vertex2 0 0 :: Vertex2 GLfloat) 
-      renderString Helvetica18 "Testing ..."
-    _ -> return ()
-
+      renderString Fixed8By13 s
+    a -> do
+      case a of 
+        Video -> setTexture p w h
+        NoVideo -> setTexture pic w h
+      renderPrimitive Quads $ do
+        corner 0 0
+        corner 0 1
+        corner 1 1
+        corner 1 0
   swapBuffers
-  postRedisplay Nothing
 
 corner :: GLfloat -> GLfloat -> IO ()
 corner x y = texCoord (TexCoord2 x y) >> vertex (Vertex2 (1-2*x) (1-2*y))

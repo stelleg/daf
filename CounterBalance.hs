@@ -16,10 +16,11 @@ import System.Random.Shuffle
 import Control.Monad.Random hiding (split)
 import Text.Printf
 
-data VisualCondition = Video | NoVideo deriving (Enum, Bounded,  Ord, Eq)
+data VisualCondition = Video | NoVideo | Instruction String deriving (Ord, Eq)
 data AudioCondition = Delay | NoDelay deriving (Enum, Bounded,  Ord, Eq)
 
 instance Show VisualCondition where
+  show (Instruction s) = s
   show Video = "vf"
   show NoVideo = ""
 
@@ -54,7 +55,7 @@ seed = 394 -- IMPORTANT!!! Keep this constant accross subjects!!!
 experiment :: IO Experiment
 experiment = do
   runs <- setStdGen (mkStdGen seed) >> runs
-  return $ map ([("practice" ++ show i, (NoVideo, NoDelay)) | i <- [1..6]] :) runs
+  return $ map ([("practice" ++ show i, (Instruction "Practice", NoDelay)) | i <- [1..6]] :) runs
 
 runs :: MonadRandom m => m [Run]
 runs  = return
