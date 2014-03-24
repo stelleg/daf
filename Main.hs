@@ -120,7 +120,7 @@ nextStim ind video = atomically (readTVar ind) >>= \case
     exitSuccess
   []:bs -> do 
     atomically $ writeTVar ind bs 
-    atomically $ writeTVar video (Instruction "Block done, press space to continue")
+    atomically $ writeTVar video (Instruction "Take a break! Press the spacebar when you are ready to continue.")
   ((s,(v,a)):stims):bs -> do
     putStrLn $ "Running stimulus: " ++ s ++ ": " ++ show (v, a)
     let filename = printf "stimuli/%s.wav" s
@@ -143,15 +143,6 @@ resize f (Size w h) = do
   let aspect = (hi * ws) / (wi * hs)
   ortho (-aspect) aspect (-1) 1 (-1) 1 
   postRedisplay Nothing
-
-{-
-resize f (Size w h) = do
-  viewport $= (Position 0 0, Size w h)
-  matrixMode $= Projection
-  loadIdentity
-  ortho (-1) 1 (-1) 1 (-1) 1
-  postRedisplay Nothing
--}
 
 idle d f phand frame = withFrame d f $ \p n -> do
   atomically $ writeTVar frame p
