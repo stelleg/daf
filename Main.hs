@@ -41,17 +41,18 @@ foreign import ccall "setup" jackSetup :: CInt -> IO ()
 foreign import ccall "setDelay" jackSetDelay :: CFloat -> IO ()
 foreign import ccall "jackClose" jackClose :: IO ()
 
-delayDur = 0.2
+delayDur = 0.18
 
 main = do
   (progname, args) <- getArgsAndInitialize
   subjectID <- do 
     cursubs <- getDirectoryContents "data" 
-    print cursubs
     return $ 1 + maximum [read $ dropExtension f|f <- cursubs ++ ["-1.wav"], 
                                                  takeExtension f == ".wav"]
   exists <- doesFileExist $ "data/" ++ show subjectID ++ ".wav"
-  if exists then error "Subject exists, will not overwrite" else return ()
+  if exists 
+    then error "Subject exists, will not overwrite" 
+    else printf "Running subject %d\n" subjectID
   es <- experiment
   let video = parseArgs args
   let run = es !! subjectID
@@ -89,7 +90,7 @@ glut run vhand video = do
   textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
   textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
   frame <- atomically $ newTVar (nullPtr)
-  video <- atomically $ newTVar (Instruction "Press space to begin practice")
+  video <- atomically $ newTVar (Video)
   picture <- mallocBytes $ w * h * 3
   ind <- atomically $ newTVar run
   idleCallback $= Just (idle d f vhand frame)
@@ -131,7 +132,6 @@ nextStim ind video = atomically (readTVar ind) >>= \case
       Delay -> jackSetDelay delayDur
       NoDelay -> jackSetDelay 0.0
 
-{-
 resize f (Size w h) = do
   viewport $= (Position 0 0, Size w h)
   matrixMode $= Projection
@@ -142,14 +142,16 @@ resize f (Size w h) = do
       wi = fromIntegral $ imageWidth f
   let aspect = (hi * ws) / (wi * hs)
   ortho (-aspect) aspect (-1) 1 (-1) 1 
-  return ()
--}
+  postRedisplay Nothing
+
+{-
 resize f (Size w h) = do
   viewport $= (Position 0 0, Size w h)
   matrixMode $= Projection
   loadIdentity
   ortho (-1) 1 (-1) 1 (-1) 1
   postRedisplay Nothing
+-}
 
 idle d f phand frame = withFrame d f $ \p n -> do
   atomically $ writeTVar frame p
