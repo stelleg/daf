@@ -45,16 +45,19 @@ delayDur = 0.18
 
 main = do
   (progname, args) <- getArgsAndInitialize
-  subjectID <- do 
-    cursubs <- getDirectoryContents "data" 
-    return $ 1 + maximum [read $ dropExtension f|f <- cursubs ++ ["-1.wav"], 
+  let (video, maybeSubjectID) = parseArgs args
+  subjectID <- case maybeSubjectID of
+    Just n -> return n 
+    Nothing -> do 
+      cursubs <- getDirectoryContents "data" 
+      return $ 1 + maximum [read $ dropExtension f|f <- cursubs ++ ["-1.wav"], 
                                                  takeExtension f == ".wav"]
+  print (video, subjectID)
   exists <- doesFileExist $ "data/" ++ show subjectID ++ ".wav"
   if exists 
     then error "Subject exists, will not overwrite" 
     else printf "Running subject %d\n" subjectID
   es <- experiment
-  let video = parseArgs args
   let run = es !! subjectID
   (vin, vout) <- createPipe
   vhand <- fdToHandle vout
@@ -64,10 +67,16 @@ main = do
   jackSetDelay 0.0
   glut run vhand video
 
-parseArgs ["-v",i]= case i of 
-  "1" -> "/dev/video1"
-  "0" -> "/dev/video0"
-parseArgs _ = "/dev/video0" 
+type VideoDevice = String
+type SubjectID = Int
+
+parseArgs :: [String] -> (VideoDevice, Maybe SubjectID)
+parseArgs args = parseArgs' args ("/dev/video0", Nothing)
+parseArgs' ("-n":i:args) (v, sid) = case read i of
+  n -> parseArgs' args (v, Just n)
+parseArgs' ("-v":i:args) (v, sid) = parseArgs' args (i, sid)
+parseArgs' [] (v, sid) = (v, sid)
+
 
 glut run vhand video = do
   d <- openDevice video
