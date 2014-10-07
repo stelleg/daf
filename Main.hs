@@ -9,7 +9,7 @@ import Control.Monad (when, forever, join)
 import Control.Concurrent (threadDelay)
 import Data.Word
 import Foreign (Ptr, nullPtr, allocaArray, peekElemOff, pokeElemOff, sizeOf)
-import Foreign.Marshal.Alloc (mallocBytes) 
+import Foreign.Marshal.Alloc (mallocBytes, free) 
 import Foreign.Marshal.Utils (copyBytes, with) 
 import System.Exit (exitFailure, exitSuccess)
 import System.IO 
@@ -40,6 +40,7 @@ import System.Directory
 foreign import ccall "setup" jackSetup :: CInt -> IO ()
 foreign import ccall "setDelay" jackSetDelay :: CFloat -> IO ()
 foreign import ccall "jackClose" jackClose :: IO ()
+foreign import ccall "print_at" printAt :: CFloat -> CFloat -> CFloat -> CWString -> IO ()
 
 delayDur = 0.18
 
@@ -77,7 +78,6 @@ parseArgs' ("-n":i:args) (v, sid) = case read i of
 parseArgs' ("-v":i:args) (v, sid) = parseArgs' args (i, sid)
 parseArgs' [] (v, sid) = (v, sid)
 
-
 glut run vhand video = do
   d <- openDevice video
   f <- setFormat d Capture . 
@@ -85,32 +85,19 @@ glut run vhand video = do
   initialDisplayMode $= [ RGBMode, DoubleBuffered, WithDepthBuffer ]
   createWindow "Delayed Audio Feedback"
   let (w,h) = (imageWidth f, imageHeight f)
-  texture Texture2D $= Enabled
-  [ti] <- genObjectNames 1
-  textureBinding Texture2D $= Just ti
-  texImage2D 
-    Texture2D 
-    NoProxy 
-    0 
-    RGBA' 
-    (TextureSize2D (fromIntegral w) (fromIntegral h)) 
-    0 
-    (PixelData RGBA UnsignedByte nullPtr)
-  textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
-  textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
   frame <- atomically $ newTVar (nullPtr)
-  video <- atomically $ newTVar (Video)
+  video <- atomically $ newTVar V
   picture <- mallocBytes $ w * h * 3
   ind <- atomically $ newTVar run
   idleCallback $= Just (idle d f vhand frame)
-  displayCallback $= display f ti video frame picture 
+  displayCallback $= display f video frame picture 
   reshapeCallback $= Just (resize f)
   depthFunc $= Just Less
   keyboardMouseCallback $= Just (\k s _ _ -> case (k,s) of
     (Char 'p', Down) -> withFrame d f $ \p n -> do
       copyBytes picture p (imageWidth f * imageHeight f * 3) 
-      atomically $ writeTVar video NoVideo
-      forkIO $ threadDelay 3000000 >> atomically (writeTVar video Video)
+      atomically $ writeTVar video N
+      forkIO $ threadDelay 3000000 >> atomically (writeTVar video V)
       return ()
     (Char 'q', Down) -> do
       jackClose
@@ -130,16 +117,16 @@ nextStim ind video = atomically (readTVar ind) >>= \case
   []:bs -> do 
     atomically $ writeTVar ind bs 
     atomically $ writeTVar video (Instruction "Take a break! Press the spacebar when you are ready to continue.")
-  ((s,(v,a)):stims):bs -> do
-    putStrLn $ "Running stimulus: " ++ s ++ ": " ++ show (v, a)
+  ((s,(a,v)):stims):bs -> do
+    putStrLn $ "Running stimulus: " ++ s ++ ": " ++ show (a, v)
     let filename = printf "stimuli/%s.wav" s
     putStrLn $ "playing " ++ filename
     forkOS $ do x <- system $ "mplayer -af extrastereo=0 -ao jack " ++ filename ++ " 2>> mplayer.log"; return () 
     atomically $ writeTVar video v
     atomically $ writeTVar ind $ stims:bs
     case a of
-      Delay -> jackSetDelay delayDur
-      NoDelay -> jackSetDelay 0.0
+      DAF -> jackSetDelay delayDur
+      NAF -> jackSetDelay 0.0
 
 resize f (Size w h) = do
   viewport $= (Position 0 0, Size w h)
@@ -163,22 +150,26 @@ idle d f phand frame = withFrame d f $ \p n -> do
 drawQuads :: [(GLfloat, GLfloat)] -> IO ()
 drawQuads = renderPrimitive Quads . mapM_ (vertex . uncurry Vertex2)
 
-display f ti vid frame pic = do
+display f vid frame pic = do
   clear [ColorBuffer, DepthBuffer]
   b <- atomically $ readTVar vid 
   let (w,h) = (imageWidth f, imageHeight f)
   p <- atomically $ readTVar frame
   case b of 
     Instruction s -> do
-      color (Color3 0 0 0 :: Color3 GLfloat)
-      drawQuads [(-1,-1), (1,-1), (1, 1), (-1,1)]
-      color (Color3 1.0 1.0 1.0 :: Color3 GLfloat)
-      rasterPos (Vertex2 0 0 :: Vertex2 GLfloat) 
-      renderString Fixed8By13 s
+      color (Color3 1 1 1 :: Color3 GLfloat)
+      s' <- newCWString s 
+      printAt 4.0 (-4.0 * fromIntegral (length s)) (0) s'
+      free s'
+    N -> do
+      color (Color3 1 1 1 :: Color3 GLfloat)
+      s' <- newCWString "+"
+      printAt 8.0 0 0 s'
+      free s'
     a -> do
       case a of 
-        Video -> setTexture p w h
-        NoVideo -> setTexture pic w h
+        V -> setTexture p w h
+        P -> setTexture pic w h
       renderPrimitive Quads $ do
         corner 0 0
         corner 0 1
@@ -189,12 +180,26 @@ display f ti vid frame pic = do
 corner :: GLfloat -> GLfloat -> IO ()
 corner x y = texCoord (TexCoord2 x y) >> vertex (Vertex2 (1-2*x) (1-2*y))
 
-setTexture buf w h = texSubImage2D
-  Texture2D
-  0
-  (TexturePosition2D 0 0)
-  (TextureSize2D (fromIntegral w) (fromIntegral h))
-  (PixelData RGB UnsignedByte buf)
+setTexture buf w h = do 
+  texture Texture2D $= Enabled
+  [ti] <- genObjectNames 1
+  textureBinding Texture2D $= Just ti
+  textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
+  textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
+  texImage2D 
+    Texture2D 
+    NoProxy 
+    0 
+    RGBA' 
+    (TextureSize2D (fromIntegral w) (fromIntegral h)) 
+    0 
+    (PixelData RGBA UnsignedByte nullPtr)
+  texSubImage2D
+    Texture2D
+    0
+    (TexturePosition2D 0 0)
+    (TextureSize2D (fromIntegral w) (fromIntegral h))
+    (PixelData RGB UnsignedByte buf)
 
 -- ffmpeg pipe for saving video
 saveVideo :: Fd -> Fd -> String -> IO CPid
