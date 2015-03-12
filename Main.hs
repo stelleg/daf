@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell, OverloadedStrings, LambdaCase#-}
+{-# CFILES jack.c gltext.c #-}
 
 module Main (main) where
 
@@ -34,6 +35,7 @@ import CounterBalance
 --import Data.WAVE
 import System.Process (system)
 import System.Posix
+import System.Posix.Signals (signalProcess, sigKILL)
 import System.FilePath.Posix
 import System.Directory
 
@@ -96,7 +98,7 @@ glut run vhand video = do
   keyboardMouseCallback $= Just (\k s _ _ -> case (k,s) of
     (Char 'p', Down) -> withFrame d f $ \p n -> do
       copyBytes picture p (imageWidth f * imageHeight f * 3) 
-      atomically $ writeTVar video N
+      atomically $ writeTVar video P 
       forkIO $ threadDelay 3000000 >> atomically (writeTVar video V)
       return ()
     (Char 'q', Down) -> do
@@ -114,14 +116,25 @@ nextStim ind video = atomically (readTVar ind) >>= \case
     jackClose
     threadDelay 3000000
     exitSuccess
+  []:[] -> do
+    atomically $ writeTVar video (Instruction "Done, thank you")
+    jackClose
+    threadDelay 3000000
+    exitSuccess
   []:bs -> do 
-    atomically $ writeTVar ind bs 
-    atomically $ writeTVar video (Instruction "Take a break! Press the spacebar when you are ready to continue.")
+    v <- atomically $ readTVar video
+    case v of 
+      Instruction "Take a break! Press the spacebar when you are ready to continue." -> do
+        atomically $ writeTVar video $ Instruction "Don't forget to look at the screen! Press spacebar when ready."
+        atomically $ writeTVar ind bs
+      _ -> do
+        atomically $ writeTVar video $ Instruction "Take a break! Press the spacebar when you are ready to continue."
+        
   ((s,(a,v)):stims):bs -> do
     putStrLn $ "Running stimulus: " ++ s ++ ": " ++ show (a, v)
     let filename = printf "stimuli/%s.wav" s
     putStrLn $ "playing " ++ filename
-    forkOS $ do x <- system $ "mplayer -af extrastereo=0 -ao jack " ++ filename ++ " 2>> mplayer.log"; return () 
+    forkOS $ do x <- system $ "mplayer -af extrastereo=0 -ao jack " ++ filename ++ " 2>> logs/mplayer.log"; return () 
     atomically $ writeTVar video v
     atomically $ writeTVar ind $ stims:bs
     case a of
@@ -163,8 +176,8 @@ display f vid frame pic = do
       free s'
     N -> do
       color (Color3 1 1 1 :: Color3 GLfloat)
-      s' <- newCWString "+"
-      printAt 8.0 0 0 s'
+      s' <- newCWString "x"
+      printAt 10.0 (-4.0) 0 s'
       free s'
     a -> do
       case a of 
@@ -206,5 +219,5 @@ saveVideo :: Fd -> Fd -> String -> IO CPid
 saveVideo pin pout filename = forkProcess $ do
   closeFd pout
   dupTo pin stdInput
-  system $ "ffmpeg -r 15 -f image2pipe -vcodec ppm -i - " ++ filename ++ " 2>ffmpeg.log"
+  system $ "ffmpeg -r 15 -f image2pipe -vcodec ppm -i - " ++ filename ++ " 2>logs/ffmpeg.log"
   return ()
