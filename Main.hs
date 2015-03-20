@@ -83,7 +83,10 @@ parseArgs' [] (v, sid) = (v, sid)
 glut run vhand video = do
   d <- openDevice video
   f <- setFormat d Capture . 
-    (\f->f{ imagePixelFormat = PixelRGB24 }) =<< getFormat d Capture
+    (\f->f{ 
+      imagePixelFormat = PixelRGB24,
+      imageWidth = 1280,
+      imageHeight = 720 }) =<< getFormat d Capture
   initialDisplayMode $= [ RGBMode, DoubleBuffered, WithDepthBuffer ]
   createWindow "Delayed Audio Feedback"
   let (w,h) = (imageWidth f, imageHeight f)
@@ -91,8 +94,9 @@ glut run vhand video = do
   video <- atomically $ newTVar V
   picture <- mallocBytes $ w * h * 3
   ind <- atomically $ newTVar run
+  [ti] <- genObjectNames 1
   idleCallback $= Just (idle d f vhand frame)
-  displayCallback $= display f video frame picture 
+  displayCallback $= display f video frame picture ti
   reshapeCallback $= Just (resize f)
   depthFunc $= Just Less
   keyboardMouseCallback $= Just (\k s _ _ -> case (k,s) of
@@ -163,7 +167,7 @@ idle d f phand frame = withFrame d f $ \p n -> do
 drawQuads :: [(GLfloat, GLfloat)] -> IO ()
 drawQuads = renderPrimitive Quads . mapM_ (vertex . uncurry Vertex2)
 
-display f vid frame pic = do
+display f vid frame pic ti = do
   clear [ColorBuffer, DepthBuffer]
   b <- atomically $ readTVar vid 
   let (w,h) = (imageWidth f, imageHeight f)
@@ -181,8 +185,8 @@ display f vid frame pic = do
       free s'
     a -> do
       case a of 
-        V -> setTexture p w h
-        P -> setTexture pic w h
+        V -> setTexture p w h ti
+        P -> setTexture pic w h ti
       renderPrimitive Quads $ do
         corner 0 0
         corner 0 1
@@ -193,9 +197,8 @@ display f vid frame pic = do
 corner :: GLfloat -> GLfloat -> IO ()
 corner x y = texCoord (TexCoord2 x y) >> vertex (Vertex2 (1-2*x) (1-2*y))
 
-setTexture buf w h = do 
+setTexture buf w h ti = do 
   texture Texture2D $= Enabled
-  [ti] <- genObjectNames 1
   textureBinding Texture2D $= Just ti
   textureFilter Texture2D $= ((Nearest, Nothing), Nearest)
   textureWrapMode Texture2D T $= (Repeated, ClampToEdge)
